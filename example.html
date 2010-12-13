@@ -1,0 +1,89 @@
+<!doctype html>
+
+<!-- websocket client test, accompanying the threaded websocket server -->
+
+
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Web socket simple example</title>
+        
+        <script>
+        try { 
+            socket = bootstrap();
+            
+            function setStatus(isOn) {
+                var d = document.getElementsByTagName('button');
+                for(var i = 0; i < d.length; i ++) {
+                    var _isOn = isOn;
+                    if(d.item(i).hasAttribute('data-inverse')) {
+                        _isOn = !_isOn
+                    }
+                    if(_isOn) {
+                        d.item(i).removeAttribute('disabled');
+                    } else {
+                        d.item(i).setAttribute('disabled', true);
+                    }
+                }
+                with(document.getElementById('status')) {
+                    if(isOn) {
+                        value = 'Connected :)';
+                        style.backgroundColor = 'darkgreen';
+                    } else {
+                        value = 'Not connected :(';
+                        style.backgroundColor = 'darkred';
+                    }
+                }
+            }
+            
+            function bootstrap() {
+                var socket = new WebSocket("ws://localhost:8888");
+                socket.onopen= function() {
+                    alert("Socket opened");
+                    setStatus(true)
+                }
+                socket.onmessage = function(event) {
+                    alert("Received: " + event.data);
+                }
+                socket.onerror = function(event) {
+                    alert("Error! See console for more info");
+                    console.log(event);
+                }
+                socket.onclose = function(event) {
+                    setStatus(false)
+                    alert("Socket closed");
+                }
+                return socket;
+            }
+            
+        } catch(e) {
+            alert(e);
+        }
+        </script>
+        <style>
+            body, button, input {
+                font-family: monospace;
+                font-size: 14px;
+            }
+            #status {
+                color: white;
+            }
+        </style>
+    </head>
+    
+    <body>
+        <fieldset>
+            <legend>Web socket test</legend>
+            <q>Because nerdy stuff should always be in monospaced fonts</q>
+            
+            <p>
+                <input type="text" readonly id="status">
+                <button data-inverse onclick="socket = bootstrap()">Open connection</button>
+                <button disabled onclick="socket.send('ping!')">PING!</button>
+                <button disabled onclick="socket.send('CLOSEME')">close me (let server close connection)</button>
+                <button disabled onclick="socket.close()">close (let client close connection)</button>
+            </p>
+        </fieldset>
+        
+    </body>
+</html>
