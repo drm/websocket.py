@@ -9,55 +9,48 @@
         <title>Web socket simple example</title>
         
         <script>
-        try { 
-            socket = bootstrap();
-            
-            function setStatus(isOn) {
-                var d = document.getElementsByTagName('button');
-                for(var i = 0; i < d.length; i ++) {
-                    var _isOn = isOn;
-                    if(d.item(i).hasAttribute('data-inverse')) {
-                        _isOn = !_isOn
-                    }
-                    if(_isOn) {
-                        d.item(i).removeAttribute('disabled');
-                    } else {
-                        d.item(i).setAttribute('disabled', true);
-                    }
+        function setStatus(isOn) {
+            var d = document.getElementsByTagName('button');
+            for(var i = 0; i < d.length; i ++) {
+                var _isOn = isOn;
+                if(d.item(i).hasAttribute('data-inverse')) {
+                    _isOn = !_isOn
                 }
-                with(document.getElementById('status')) {
-                    if(isOn) {
-                        value = 'Connected :)';
-                        style.backgroundColor = 'darkgreen';
-                    } else {
-                        value = 'Not connected :(';
-                        style.backgroundColor = 'darkred';
-                    }
+                if(_isOn) {
+                    d.item(i).removeAttribute('disabled');
+                } else {
+                    d.item(i).setAttribute('disabled', true);
                 }
             }
-            
-            function bootstrap() {
-                var socket = new WebSocket("ws://localhost:8888");
-                socket.onopen= function() {
-                    alert("Socket opened");
-                    setStatus(true)
+            with(document.getElementById('status')) {
+                if(isOn) {
+                    value = 'Connected :)';
+                    style.backgroundColor = 'darkgreen';
+                } else {
+                    value = 'Not connected :(';
+                    style.backgroundColor = 'darkred';
                 }
-                socket.onmessage = function(event) {
-                    alert("Received: " + event.data);
-                }
-                socket.onerror = function(event) {
-                    alert("Error! See console for more info");
-                    console.log(event);
-                }
-                socket.onclose = function(event) {
-                    setStatus(false)
-                    alert("Socket closed");
-                }
-                return socket;
             }
-            
-        } catch(e) {
-            alert(e);
+        }
+        
+        function bootstrap() {
+            var socket = new WebSocket("ws://localhost:8888");
+            socket.onopen= function() {
+                alert("Socket opened");
+                setStatus(true)
+            }
+            socket.onmessage = function(event) {
+                alert("Received: " + event.data);
+            }
+            socket.onerror = function(event) {
+                alert("Error! See console for more info");
+                console.log(event);
+            }
+            socket.onclose = function(event) {
+                setStatus(false)
+                alert("Socket closed");
+            }
+            return socket;
         }
         </script>
         <style>

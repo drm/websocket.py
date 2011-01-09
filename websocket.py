@@ -1,136 +1,159 @@
-"""A draft76 HTML5 WebSocket server and request handler based on http.server
-
-This code is Python3 only, but can easily be adapted for Python2.
-
-Author: Gerard van Helden <drm@melp.nl>
-More information: http://github.com/drm/websocket.py
-"""
-
+import socketserver
 import http.server
-import socket
+import threading
+from struct import pack
+import hashlib
 
-CLOSE_FRAME = b'\xff\x00'
-
-class ProtocolError(Exception):
-    """Base class for websocket protocol errors"""
-    pass
-
-class ChallengeError(Exception):
-    """This exception is raised whenever the client's challenge doesn't meet the specifications"""
-    pass
+class BaseWebSocketServer(socketserver.ThreadingTCPServer):
+    _lock = threading.Lock()
+    clients = []
+    is_shutdown = False
+    def server_activate(self):
+        self.socket.settimeout(0.1)
+        print("Timeout set!")
+        socketserver.ThreadingTCPServer.server_activate(self)
     
-class UnsupportedException(Exception):
-    """Raised when a protocol or request header is sent by the client, that isn't supported by 
-    this server"""
-    pass
+    def register_client(self, client):
+        self.clients.append(client)
+        
+    def unregister_client(self, client):
+        self.clients.remove(client)
+
+    def broadcast(self, message):
+        with self._lock:
+            for client in self.clients:
+                client.write_message(message)
+
+    def shutdown(self):
+        with self._lock:
+            self.is_shutdown = True
+            for client in self.clients:
+                client.close()
+        socketserver.ThreadingTCPServer.shutdown(self);
 
 class BaseWebSocketHandler(http.server.BaseHTTPRequestHandler):
-    """A base request handler for WebSocket requests. The handshake 
-    is performed by do_GET(), and an on_message() function is called 
-    every time the client sends a message. write_message() can be
-    called to send a message back to the client."""
-
-    def do_GET(self):
-        "Implementation of BaseHTTPRequestHandler.do_GET, performing a Websocket handshake"
-        
-        if self.headers['Connection'] == 'Upgrade' and self.headers['Upgrade'] == 'WebSocket':
-        
-            #TODO detect incompatible clients and throw UnsupportedException
-        
-            self.send_response(101, 'Web Socket Protocol Handshake')
-            self.send_header('Upgrade', 'WebSocket')
-            self.send_header('Connection', 'Upgrade')
-            self.send_header('Sec-WebSocket-Origin', self.headers['Origin'])
-            self.send_header('Sec-WebSocket-Location', 'ws://localhost:8888/')
-            self.send_header('Sec-WebSocket-Protocol', self.headers['Sec-WebSocket-Protocol'])
-            self.end_headers()
-
-            self.wfile.write(self._challenge());
-            
-            try:
-                hasClosed = self.run()
-                
-                if hasClosed:
-                    print("Client closed connection")
-                else:
-                    print("Closing connection")
-                    self.wfile.write(CLOSE_FRAME)
-            except socket.error:
-                # Client disconnected, hand control back to server
-                return
-        else:
-            # TODO, does 400 as a status code make sense? 
-            self.send_error(400, "Bad request") 
-            
-    def _challenge(self):
-        "Constructs the Websocket challenge/response key, based on draft 76"
+    _debugging = False
+    _close_connection = False
+    connected = False
     
-        from struct import pack
-        from hashlib import md5
-        
-        def _hash(key):
-            """Counts all spaces, concatenates all numeric characters and
-            returns the division of the integral value of latter by the former.
-            
-            Raises ChallengeError if the key contains errors"""
 
-            spaceCount = 0;
-            num = '';
-            
-            for i in range(0, len(key)):
-                if key[i] == " ":
-                    spaceCount += 1
-                elif key[i].isnumeric():
-                    num += key[i]
-            num = int(num)
-            if spaceCount == 0:
-                raise ChallengeError("Number of spaces is zero")
-            if num == 0:
-                raise ChallengeError("Number is zero")
-            if num % spaceCount != 0:
-                raise ChallengeError("Number is not divisible by number of spaces")
+    """A simple draft76 implementation for WebSocket servers based on Python's http server"""
+    def do_GET(self):
+        if self.headers['Connection'] == 'Upgrade':
+            self._debug("Connection upgrade requested")
 
-            return pack('!I', int(int(num) / spaceCount))
+            if self.headers['Upgrade'] == 'WebSocket':
+                try:
+                    self._handshake()
+                except ValueError:
+                    self.send_error(400)
+                    return
+                    
+                self._debug("Connection upgraded, now waiting for messages")
+                self.connected = True
+                self.server.register_client(self)
+                print(type(self.rfile.raw))
+                while not self.server.is_shutdown:
+                    byte = self.rfile.read1(1)
+                    
+                    if byte == b'\x00':
+                        msg = b''
+                        while byte != b'\xff':
+                            byte = self.rfile.read1(1)
+                            msg += byte
+                        
+                        self.on_message(bytes.decode(msg[:-1]))
+                    elif len(byte) == 0:
+                        self._debug("Read error, connection was aborted by client")
+                        self._close_connection = True
+                    else:
+                        self._debug("Unknown byte %s" % byte)
+                        # drop byte (TODO figure out what to do here)
+                        pass
+                        
+                    if self._close_connection:
+                        break
+                self.connected = False
+                self.server.unregister_client(self)
+
+            else:
+                self._debug("Connection upgrade type not %s understood" % self.headers['Upgrade'])
+                # Unsupported connection upgrade
+                self.send_error(501)
+        else:
+            # Bad request
+            self.send_error(400) 
+            
+    def close(self):
+        self._close_connection = True
+        pass
+            
+    def _handshake(self):
+        """Performs the WebSocket connection upgrade handshake"""
+        self._debug("Connection upgrade WebSocket, construction challenge response")
         
-        ret = md5()
-        # add the two hashes based on the Sec-WebSocket-Key headers
-        for i in ["1", "2"]:
-            ret.update(_hash(self.headers['Sec-WebSocket-Key' + i]))
-        # add the first 8 characters from the request body token
-        ret.update(self.rfile.read(8));
+        key1 = self.headers['Sec-WebSocket-Key1']
+        key2 = self.headers['Sec-WebSocket-Key2']
+        key3 = self.rfile.read(8)
         
-        return ret.digest()
+        if key1 == None or key2 == None:
+            raise ValueError("Missing challenge keys")
+
+        response = self._challenge_response(key1, key2, key3)
         
+        self.send_response(101, "WebSocket Protocol Handshake")
+        self.send_header('Connection', 'Upgrade')
+        self.send_header('Upgrade', 'WebSocket')
         
-    def write_message(self, data): 
-        """Write a delimited message block to the client"""
+        if 'Origin' in self.headers:
+            self.send_header('Sec-WebSocket-Origin', self.headers['Origin'])
+        if 'Sec-WebSocket-Protocol' in self.headers:
+            self.send_header('Sec-WebSocket-Protocol', self.headers['Sec-WebSocket-Protocol'])
+
+        self.send_header('Sec-WebSocket-Location', 'ws://' + self.headers['Host'] + self.path);
+        self.end_headers()
+
+        self.wfile.write(response)
+        
+    def _challenge_response(self, key1, key2, key3):
+        """The response to a WebSocket challenge. 
+        
+        - key1 is the contents of the Sec-WebSocket-Key1 header
+        - key1 is the contents of the Sec-WebSocket-Key2 header
+        - key3 is the contents of the 8 bytes long request body"""
+        def extract_number(key):
+            number = ''
+            spaces = 0
+            for ch in key:
+                if ch == " ": 
+                    spaces += 1
+                elif ch.isdigit(): 
+                    number += ch
+
+            number = int(number)
+            if spaces > 0 and number > 0 and number % spaces == 0:
+                return int(int(number) / spaces)
+            raise ValueError("Invalid challenge part %s, can not extract number" % key)
+
+        self._debug("Challenge: \n\t%s\n\t%s\n\t%s" % (key1, key2, key3))
+
+        packed = pack('>L', extract_number(key1))
+        packed += pack('>L', extract_number(key2)) 
+        packed += key3
+        
+        response =  hashlib.md5(packed).digest()
+        
+        self._debug("Response: %s" % response)
+        
+        return response
+        
+    def write_message(self, message):
+        self._debug("Writing message %s" % message)
+        raw_data = str.encode(message)
         self.wfile.write(b'\x00')
-        self.wfile.write(data.encode())
+        self.wfile.write(raw_data)
         self.wfile.write(b'\xff')
-        self.wfile.flush() #TODO is this really needed?
         
-    def on_message(self, data): 
-        """Called whenever a message is received from the client. Return True to close connection"""
-        return True
-        
-    def run(self):
-        """Runs while the connection is not closed. If the client requests closing connection, 
-        the closing is acknowledged by replying with the closing frame. Other frame types or not
-        (yet) supported
-        
-        The method returns True if the client was notified of closing the connection, and False
-        if not"""
-        while True:
-            msg = b''
-            start = self.rfile.read(1)
-            if start == b'\x00':
-                while msg[-1:] != b'\xff':
-                    msg += self.rfile.read(1)
-                cont = self.on_message(msg[:-1].decode())
-                if not cont:
-                    return False
-            else: #TODO handle frame types
-                # echo the message back, to acknowledge closing connection
-                self.wfile.write(start) 
-                return True
+    def _debug(self, message):
+        self._debugging and print("[DEBUG] %s" % message)
 

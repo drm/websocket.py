@@ -1,35 +1,30 @@
-import http.server
-import socketserver
-import threading
-from websocket import BaseWebSocketHandler
+import websocket
 
-class MyWebSocketServer(socketserver.ThreadingTCPServer):
+
+class MyWebSocketServer(websocket.BaseWebSocketServer):
     pass
             
-class MyWebSocketHandler(BaseWebSocketHandler):
+class MyWebSocketHandler(websocket.BaseWebSocketHandler):
+    _debugging = True
+
     def on_message(self, msg):
         print("Got message '", msg, "'", sep="")
         if msg == "CLOSEME":
             print("Client requested connection to close")
             return False
         else:
-            self.write_message("pong")
-            print("Writing message 'pong'")
+            self.server.broadcast("pong")
             return True
 
 
-settings = {
-    'address': '127.0.0.1',
-    'port': 8888
-}
+bind = ('127.0.0.1', 8888)
         
 if __name__ == "__main__":
-    
     server = MyWebSocketServer(
-        (settings["address"], settings["port"]), 
+        bind, 
         MyWebSocketHandler
     );
-    print("Listening on %(address)s:%(port)s" % settings)
+    print("Listening on %s:%s" % bind)
     try:
         server.serve_forever()
     finally:
